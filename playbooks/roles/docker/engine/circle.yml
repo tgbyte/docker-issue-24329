@@ -1,0 +1,19 @@
+---
+
+machine:
+  services:
+    - docker
+
+dependencies:
+  cache_directories:
+    - "~/docker"
+  override:
+    - docker info
+    - if [[ -e ~/docker/image.tar ]]; then docker load -i ~/docker/image.tar; fi
+    - docker pull playlist/ansible:latest
+    - mkdir -p ~/docker; docker save playlist/ansible > ~/docker/image.tar
+
+test:
+  override:
+    - make test:
+        timeout: 600

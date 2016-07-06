@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  author: playlist
+  company: Playlist
+  description: Installs Docker
+  min_ansible_version: 1.8
+  license: MIT
+  platforms:
+    - name: Ubuntu
+      versions:
+        - All
+  categories:
+    - system
+
+dependencies: []

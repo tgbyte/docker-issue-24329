@@ -1,0 +1,37 @@
+---
+- name: set up docker
+  hosts: all
+  become: true
+  roles:
+    - { role: docker/engine, apt_repository: 'deb https://apt.dockerproject.org/repo {{ ansible_distribution | lower }}-{{ ansible_distribution_release }} experimental' }
+  pre_tasks:
+    - name: set hostname
+      hostname:
+        name: '{{ inventory_hostname }}'
+    - name: generate /etc/hosts
+      copy: dest=/etc/hosts content="127.0.0.1 localhost {{ inventory_hostname }}\n172.28.128.3 n01\n172.28.128.4 n02\n172.28.128.5 n03\n172.28.128.6 n04\n172.28.128.7 n05\n"
+
+- name: create docker swarm
+  hosts: leader
+  become: true
+  tasks:
+    - name: determine swarm status
+      command: docker info
+      register: docker_info
+
+    - name: create docker swarm
+      command: docker swarm init --listen-addr {{ ansible_eth1.ipv4.address }}:2377 --secret {{ swarm_secret | quote }} --auto-accept worker --auto-accept manager
+      when: "'Swarm: inactive' in docker_info.stdout"
+
+- name: join docker swarm
+  hosts: follower
+  serial: 1
+  become: true
+  tasks:
+    - name: determine swarm status
+      command: docker info
+      register: docker_info
+
+    - name: join docker swarm
+      command: docker swarm join --manager --listen-addr {{ ansible_eth1.ipv4.address }}:2377 --secret {{ swarm_secret | quote }} {{ swarm_manager }}:2377
+      when: "'Swarm: inactive' in docker_info.stdout"

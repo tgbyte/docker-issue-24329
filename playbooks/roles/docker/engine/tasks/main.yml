@@ -1,0 +1,128 @@
+---
+- name: fail if not a new release of Debian
+  fail:
+    msg: "{{ ansible_distribution_major_version }} is not an acceptable version of Debian for this role"
+  when: "ansible_distribution_major_version < 8"
+
+- name: install apt-transport-https
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+    state: latest
+    update_cache: yes
+    cache_valid_time: 600
+
+- name: add docker repository key
+  apt_key:
+    id: "{{ apt_key_sig }}"
+    keyserver: "{{ apt_key_server }}"
+    state: present
+
+- name: add docker repository and update apt cache
+  apt_repository:
+    repo: "{{ apt_repository }}"
+    mode: '0644'
+    update_cache: yes
+    state: present
+
+- name: install (or update) docker package
+  apt:
+    name: "{{ docker_pkg_name }}"
+    state: latest
+    update_cache: yes
+    cache_valid_time: 600
+
+- name: set docker daemon options
+  copy:
+    content: "DOCKER_OPTS=\"{{ docker_opts.rstrip('\n') }}\""
+    dest: /etc/default/docker
+    owner: root
+    group: root
+    mode: 0644
+  notify:
+    - reload docker
+  when: docker_opts != ""
+
+# We must install pip via apt before we can use the pip module below
+- name: install setuptools, python-dev package with apt
+  apt:
+    pkg: "{{ item }}"
+    state: latest
+    update_cache: yes
+    cache_valid_time: 600
+  with_items:
+    - python-setuptools
+    - python-dev
+
+- name: ensure pip package is not installed
+  apt:
+    pkg: python-pip
+    state: absent
+
+- name: Install pip
+  easy_install: name=pip
+
+# Upgrade pip with pip to fix angstwad/docker.ubuntu/pull/35 and docker-py/issues/525
+- name: upgrade latest setuptools and docker-py with pip
+  pip:
+    name: "{{ item }}"
+    state: latest
+  with_items:
+    - pip
+    - setuptools
+    - docker-py
+
+- name: check if /etc/updatedb.conf exists
+  stat:
+    path: /etc/updatedb.conf
+  register: updatedb_conf_exists
+
+- name: ensure updatedb does not index /var/lib/docker
+  shell: >
+    ex -s -c '/PRUNEPATHS=/v:/var/lib/docker:s:"$: /var/lib/docker"' -c 'wq' /etc/updatedb.conf
+  when: updatedb_conf_exists.stat.exists
+
+- name: enable overlay module (on ARMv7)
+  lineinfile: dest=/etc/modules line=overlay regexp='^overlay$' backrefs=yes
+  when: ansible_machine == "armv7l"
+
+- name: check if /etc/default/ufw exists
+  stat:
+    path: /etc/default/ufw
+  register: ufw_default_exists
+
+- name: change ufw default forward policy from drop to accept
+  lineinfile:
+    dest: /etc/default/ufw
+    regexp: "^DEFAULT_FORWARD_POLICY="
+    line: "DEFAULT_FORWARD_POLICY=\"ACCEPT\""
+  when: ufw_default_exists.stat.exists
+
+- stat: path=/etc/default/grub
+  register: etc_default_grub
+
+- name: enable memory limit support
+  lineinfile: dest=/etc/default/grub regexp=cgroup_enable=memory line=GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX cgroup_enable=memory"
+  when: etc_default_grub.stat.exists == True
+  notify:
+    - update grub
+    - reboot
+    - wait for server to come back
+
+- name: enable swap limit support
+  lineinfile: dest=/etc/default/grub regexp=swapaccount=1 line=GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX swapaccount=1"
+  when: etc_default_grub.stat.exists == True
+  notify:
+    - update grub
+    - reboot
+    - wait for server to come back
+
+- name: add users to docker group
+  user: name={{ item }} groups=docker append=yes
+  with_items: "{{ users }}"
+
+- name: start docker
+  service:
+    name: docker
+    state: started
